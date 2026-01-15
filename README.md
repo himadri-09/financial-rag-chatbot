@@ -293,7 +293,7 @@ Current Choice: 384 dims is optimal because:
 ### Step 1: Clone Repository
 
 ```bash
-git clone https://github.com/yourusername/financial-rag-chatbot.git
+git clone https://github.com/himadri-09/financial-rag-chatbot.git
 cd financial-rag-chatbot
 ```
 
@@ -349,14 +349,6 @@ transformers>=4.36.0       # Transformer models
 
 Create a `.env` file in the project root:
 
-```bash
-# Copy the example file
-cp .env.example .env
-
-# Edit with your API keys
-nano .env  # or use any text editor
-```
-
 **.env file contents**:
 ```bash
 # Pinecone Configuration
@@ -365,10 +357,6 @@ PINECONE_API_KEY=your_pinecone_api_key_here
 # Google Gemini Configuration
 GEMINI_API_KEY=your_gemini_api_key_here
 ```
-
-**Important**:
-- ✅ Pinecone serverless does NOT require `PINECONE_ENVIRONMENT`
-- ✅ Only `PINECONE_API_KEY` and `GEMINI_API_KEY` are needed
 
 ### Step 6: Prepare Data Files
 
@@ -381,15 +369,6 @@ financial-rag-chatbot/
 └── ...
 ```
 
-**Expected CSV formats**:
-
-**holdings.csv**:
-- Required columns: `PortfolioName`, `SecName`, `SecurityTypeName`, `Qty`, `Price`, `PL_YTD`, `MV_Base`, `AsOfDate`
-- Date format: DD/MM/YY (e.g., 08/01/23)
-
-**trades.csv**:
-- Required columns: `PortfolioName`, `Name`, `SecurityType`, `TradeTypeName`, `Quantity`, `Price`, `TotalCash`, `TradeDate`
-
 ---
 
 ## ⚙️ Configuration
@@ -397,56 +376,6 @@ financial-rag-chatbot/
 ### Configuration File: `config.py`
 
 All settings are centralized in `config.py`:
-
-```python
-# File paths
-HOLDINGS_CSV = "holdings.csv"
-TRADES_CSV = "trades.csv"
-
-# Pinecone settings
-PINECONE_INDEX_NAME = "financial-chatbot"
-PINECONE_DIMENSION = 384          # Match embedding model
-PINECONE_METRIC = "cosine"
-PINECONE_NAMESPACE_HOLDINGS = "holdings"
-PINECONE_NAMESPACE_TRADES = "trades"
-
-# Embedding settings
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-CHUNK_SIZE_TOKENS = 500           # Chunk size
-CHUNK_OVERLAP_TOKENS = 50         # Overlap for context
-
-# Retrieval settings
-TOP_K_CHUNKS = 10                 # Retrieve top-10
-MIN_RELEVANCE_SCORE = 0.3         # Filter threshold
-MIN_CHUNKS_REQUIRED = 3           # Minimum for valid answer
-
-# LLM settings
-LLM_MODEL = "gemini-2.5-flash"
-LLM_TEMPERATURE = 0.1             # Low = factual
-LLM_MAX_TOKENS = 1024             # Max response length
-```
-
-### Customization Options
-
-**Change chunk size** (if you want more/less context per chunk):
-```python
-CHUNK_SIZE_TOKENS = 300  # Smaller chunks, more granular
-```
-
-**Adjust retrieval** (if you want more/fewer chunks):
-```python
-TOP_K_CHUNKS = 15  # Retrieve top-15 instead of top-10
-```
-
-**Change relevance threshold** (stricter/looser filtering):
-```python
-MIN_RELEVANCE_SCORE = 0.5  # Only use highly relevant chunks (score ≥ 0.5)
-```
-
-**Modify LLM creativity** (for more/less variation):
-```python
-LLM_TEMPERATURE = 0.3  # Slightly more creative (still factual)
-```
 
 ---
 
@@ -1036,161 +965,6 @@ Sorry, I cannot find the answer in the provided data.
 
 ---
 
-## 🐛 Troubleshooting
-
-### Common Issues
-
-#### 1. `ImportError: cannot import name 'cached_download' from 'huggingface_hub'`
-
-**Cause**: Version conflict between `sentence-transformers` and `huggingface_hub`
-
-**Fix**:
-```bash
-pip install --upgrade sentence-transformers>=2.5.0
-pip install --upgrade huggingface-hub>=0.20.0
-```
-
-#### 2. `Exception: The official Pinecone python package has been renamed from 'pinecone-client' to 'pinecone'`
-
-**Cause**: Old Pinecone package name
-
-**Fix**:
-```bash
-pip uninstall pinecone-client
-pip install pinecone>=5.0.0
-```
-
-#### 3. `Generation error: 404 models/gemini-pro`
-
-**Cause**: Model "gemini-pro" deprecated or unavailable
-
-**Fix**: Update [config.py:42](config.py#L42):
-```python
-LLM_MODEL = "gemini-2.5-flash"  # Use updated model
-```
-
-#### 4. `.env` file not found or API keys missing
-
-**Cause**: `.env` file not created or missing keys
-
-**Fix**:
-```bash
-# Create .env from template
-cp .env.example .env
-
-# Edit with your API keys
-nano .env
-```
-
-Add your keys:
-```
-PINECONE_API_KEY=your_actual_pinecone_key_here
-GEMINI_API_KEY=your_actual_gemini_key_here
-```
-
-#### 5. `Pinecone index not found` error when running `app.py`
-
-**Cause**: Forgot to run `setup_pinecone.py` first
-
-**Fix**:
-```bash
-# Run one-time setup
-python setup_pinecone.py
-
-# Then run app
-streamlit run app.py
-```
-
-#### 6. Chatbot responds "Sorry, I cannot find the answer" for valid queries
-
-**Possible causes**:
-- Retrieval score too low (< 0.3)
-- Not enough relevant chunks (< 3)
-- Query too vague
-
-**Fix**:
-- Make query more specific: "How many holdings does **Garfield** have?" (include fund name)
-- Lower threshold in [config.py:38](config.py#L38):
-  ```python
-  MIN_RELEVANCE_SCORE = 0.2  # Was 0.3
-  ```
-
-#### 7. Slow response times (> 10 seconds)
-
-**Possible causes**:
-- Large DataFrames (> 100K rows)
-- Slow internet (Pinecone/Gemini API calls)
-
-**Fix**:
-- Check internet connection
-- Monitor API rate limits
-- Consider caching frequently asked queries
-
-#### 8. `ModuleNotFoundError: No module named 'tiktoken'`
-
-**Cause**: Missing dependency
-
-**Fix**:
-```bash
-pip install tiktoken>=0.5.0
-```
-
----
-
-## 🤝 Contributing
-
-Contributions welcome! Please follow these guidelines:
-
-### Reporting Issues
-
-1. Check existing issues first
-2. Provide clear description
-3. Include error messages
-4. Share environment info (Python version, OS)
-
-### Pull Requests
-
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit changes (`git commit -m 'Add AmazingFeature'`)
-4. Push to branch (`git push origin feature/AmazingFeature`)
-5. Open Pull Request
-
-### Code Style
-
-- Follow PEP 8 (Python style guide)
-- Add docstrings to functions
-- Include type hints
-- Add comments for complex logic
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 🙏 Acknowledgments
-
-- **Pinecone** for managed vector database
-- **Google** for Gemini LLM free tier
-- **Hugging Face** for sentence-transformers models
-- **Streamlit** for rapid UI development
-- **Pandas** for powerful data manipulation
-
----
-
-## 📞 Support
-
-For questions, issues, or feedback:
-
-- **GitHub Issues**: [Create an issue](https://github.com/yourusername/financial-rag-chatbot/issues)
-- **Email**: your.email@example.com
-- **Documentation**: This README
-
----
-
 ## 🗺️ Roadmap
 
 Future enhancements:
@@ -1205,48 +979,3 @@ Future enhancements:
 - [ ] **Comparison mode** (side-by-side fund comparison)
 
 ---
-
-## 📚 Further Reading
-
-### RAG (Retrieval-Augmented Generation)
-
-- [RAG Paper (Lewis et al., 2020)](https://arxiv.org/abs/2005.11401)
-- [LangChain RAG Guide](https://python.langchain.com/docs/use_cases/question_answering/)
-
-### Vector Databases
-
-- [Pinecone Documentation](https://docs.pinecone.io/)
-- [Understanding Vector Embeddings](https://www.pinecone.io/learn/vector-embeddings/)
-
-### LLMs
-
-- [Google Gemini API Docs](https://ai.google.dev/docs)
-- [Prompt Engineering Guide](https://www.promptingguide.ai/)
-
-### Embeddings
-
-- [Sentence-Transformers Documentation](https://www.sbert.net/)
-- [Hugging Face Models](https://huggingface.co/sentence-transformers)
-
----
-
-## ✨ Built With Love
-
-This project was designed to solve a real problem: **accurate financial data analysis** using AI.
-
-**Key Innovation**: Hybrid RAG + Direct Aggregation ensures **100% accurate** fund performance comparisons while maintaining the **semantic search power** of RAG for specific queries.
-
-**Result**: Best of both worlds! 🚀
-
----
-
-**Star ⭐ this repo if you found it helpful!**
-
-```
-                    💰 Financial Data RAG Chatbot
-                  Ask. Analyze. Get Accurate Answers.
-```
-
----
-
-Last updated: January 2025
