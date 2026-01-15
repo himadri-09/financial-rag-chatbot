@@ -26,13 +26,18 @@ A **Hybrid RAG (Retrieval-Augmented Generation) + Direct Aggregation** chatbot t
 
 ## 🎯 Overview
 
-This chatbot is trained on financial data containing:
+This chatbot is built with a **clean FastAPI backend + minimal frontend architecture** and trained on financial data containing:
 - **Holdings**: 1,022 rows of portfolio positions (securities, quantities, P&L metrics)
 - **Trades**: 649 rows of buy/sell transactions
 
 It uses a **novel hybrid approach** that routes queries intelligently:
 - **Aggregation queries** (e.g., "Which fund performed best?") → Direct pandas computation on **ALL funds**
 - **Specific queries** (e.g., "How many holdings does Garfield have?") → RAG semantic search
+
+**Architecture highlights**:
+- Separated backend (FastAPI REST API) and frontend (static HTML/JS)
+- RESTful API with comprehensive logging
+- Minimal, dependency-free UI that's fast and responsive
 
 ### Key Innovation: Solving RAG's Aggregation Problem
 
@@ -118,7 +123,14 @@ Result: "Based on the complete data, Ytum performed best with
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                       USER INTERFACE                             │
-│                   (Streamlit Web App)                            │
+│              (Minimal HTML/CSS/JS Frontend)                      │
+└─────────────────────────┬────────────────────────────────────────┘
+                          ↓
+                  HTTP POST /api/query
+                          ↓
+┌──────────────────────────────────────────────────────────────────┐
+│                     FASTAPI BACKEND                              │
+│                       (app.py)                                   │
 └─────────────────────────┬────────────────────────────────────────┘
                           ↓
                     User Query
@@ -190,7 +202,7 @@ Result: "Based on the complete data, Ytum performed best with
                         ↓
             ┌───────────────────────────┐
             │     FINAL ANSWER          │
-            │  Displayed in Streamlit   │
+            │  JSON Response to Client  │
             └───────────────────────────┘
 ```
 
@@ -242,7 +254,8 @@ Answer: "Garfield has 221 holdings."
 
 | Component        | Technology                               | Purpose                         | Why This Choice?                                      |
 |------------------|------------------------------------------|----------------------------------|------------------------------------------------------|
-| Frontend         | Streamlit 1.29+                          | Chat interface                   | Rapid prototyping, built-in chat UI                  |
+| Backend API      | FastAPI 0.100+                           | REST API server                  | High performance, async support, auto documentation  |
+| Frontend         | Minimal HTML/CSS/JS                      | Chat interface                   | Lightweight, no dependencies, fast loading           |
 | Vector DB        | Pinecone (Serverless)                    | Embedding storage & search       | Managed service, free tier (100K vectors)            |
 | Embeddings       | sentence-transformers/all-MiniLM-L6-v2   | Text → 384-dim vectors           | Fast, runs locally, sufficient accuracy              |
 | LLM              | Google Gemini-2.5-Flash                  | Natural language generation      | Free tier (60 req/min), fast responses               |
@@ -317,7 +330,8 @@ pip install -r requirements.txt
 
 **Dependencies installed**:
 ```
-streamlit>=1.29.0          # Web UI
+fastapi>=0.100.0           # REST API framework
+uvicorn>=0.23.0            # ASGI server
 pandas>=2.0.0              # Data processing
 numpy>=1.24.0              # Numerical operations
 pinecone>=5.0.0            # Vector database
@@ -457,16 +471,57 @@ Note: You only need to run this setup once.
 ### Launch the Chatbot
 
 ```bash
-streamlit run app.py
+python app.py
 ```
 
 **What happens**:
-1. Streamlit opens browser at `http://localhost:8501`
-2. App loads cached RAG pipeline (fast, ~2 seconds)
-3. Chat interface appears
-4. Ready to ask questions!
+1. FastAPI server starts on `http://localhost:8000`
+2. RAG system initializes (loads data, connects to Pinecone, ~30 seconds first time)
+3. Server ready to accept requests
+4. Open browser to `http://localhost:8000` to access the chat interface
 
-**Browser auto-opens**. If not, manually visit: `http://localhost:8501`
+**Manual access**: Visit `http://localhost:8000` in your browser
+**API documentation**: Visit `http://localhost:8000/docs` for interactive API docs
+
+---
+
+### API Endpoints
+
+The FastAPI backend provides the following REST API endpoints:
+
+#### GET /
+Returns the minimal HTML chat interface.
+
+#### GET /api/health
+Health check endpoint to verify system status.
+
+**Response**:
+```json
+{
+  "status": "healthy",
+  "message": "System is ready",
+  "system_ready": true
+}
+```
+
+#### POST /api/query
+Main query endpoint for asking questions.
+
+**Request body**:
+```json
+{
+  "question": "Which fund performed best by yearly P&L?"
+}
+```
+
+**Response**:
+```json
+{
+  "answer": "Based on complete data, Ytum performed best with $46,789,200...",
+  "query_type": "aggregation",
+  "error": null
+}
+```
 
 ---
 
@@ -474,31 +529,12 @@ streamlit run app.py
 
 #### Main Interface
 
-```
-┌──────────────────────────────────────────────────────────┐
-│  💰 Financial Data Chatbot                               │
-│  Ask questions about fund holdings, trades, and          │
-│  performance                                             │
-├──────────────────────────────────────────────────────────┤
-│                                                          │
-│  📝 Example Questions                                    │
-│  ┌───────────────────┬─────────────────────────────┐   │
-│  │ Aggregation       │ Specific                    │   │
-│  ├───────────────────┼─────────────────────────────┤   │
-│  │ [Which fund best] │ [Garfield holdings count]   │   │
-│  │ [Compare all]     │ [MNC securities]            │   │
-│  │ [Top 3 by P&L]    │ [HoldCo 1 trades]           │   │
-│  └───────────────────┴─────────────────────────────┘   │
-│                                                          │
-│  ─────────────────────────────────────────────────────  │
-│                                                          │
-│  [Chat history appears here...]                         │
-│                                                          │
-│  ┌────────────────────────────────────────────────────┐ │
-│  │ Ask about funds, holdings, or trades...           │ │
-│  └────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────┘
-```
+The chat interface is a clean, minimal design with:
+- Header with chatbot title
+- Scrollable chat area showing conversation history
+- Message bubbles for user (blue, right-aligned) and assistant (gray, left-aligned)
+- Query type badges showing "Aggregation Query" or "Specific Query"
+- Input field at bottom with Send button
 
 #### Example Conversation
 
@@ -539,27 +575,16 @@ Sorry, I cannot find the answer in the provided data.
 
 ---
 
-### Sidebar Controls
-
-**Clear Chat History**:
-- Click "Clear Chat History" button
-- Resets conversation
-- Keeps RAG system loaded (no re-initialization)
-
-**About Section**:
-- Shows system information
-- Data statistics: 1,022 holdings, 649 trades
-- Routing explanation
-
----
-
 ## 📁 Project Structure
 
 ```
 financial-rag-chatbot/
 │
-├── app.py                    # Streamlit web interface (MAIN ENTRY POINT)
+├── app.py                    # FastAPI backend server (MAIN ENTRY POINT)
 ├── setup_pinecone.py         # One-time setup script (run once)
+│
+├── static/                   # Frontend files
+│   └── index.html            # Minimal chat UI (HTML/CSS/JS)
 │
 ├── config.py                 # Configuration settings (all constants)
 ├── data_processor.py         # CSV loading, cleaning, chunking
@@ -570,7 +595,6 @@ financial-rag-chatbot/
 │
 ├── requirements.txt          # Python dependencies
 ├── .env                      # API keys (create from .env.example)
-├── .env.example              # Template for .env
 ├── README.md                 # This file
 │
 ├── holdings.csv              # Holdings data (1,022 rows) [USER PROVIDED]
@@ -583,7 +607,8 @@ financial-rag-chatbot/
 
 | File | Purpose | When to Edit |
 |------|---------|--------------|
-| **app.py** | Streamlit UI, chat interface | Modify UI layout or add features |
+| **app.py** | FastAPI REST API server | Add new API endpoints or modify routing |
+| **static/index.html** | Minimal chat UI | Modify frontend design or behavior |
 | **setup_pinecone.py** | Initialize Pinecone once | Rarely (only if setup flow changes) |
 | **config.py** | All settings & constants | Change chunk size, retrieval settings, prompts |
 | **data_processor.py** | Load CSVs, create chunks | Adapt to different CSV formats |
