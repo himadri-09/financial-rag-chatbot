@@ -1,171 +1,229 @@
 """
-Streamlit Application for Financial RAG Chatbot
-Simplified chat interface - assumes Pinecone is already initialized.
+FastAPI Application for Financial RAG Chatbot
+Simple REST API with minimal HTML UI and comprehensive logging.
 """
 
-import streamlit as st
+import logging
+import sys
+import re
+from pathlib import Path
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from typing import Optional
 from dotenv import load_dotenv
+import uvicorn
+
 from data_processor import DataProcessor
 from vector_db import VectorDatabase
 from retrieval import HybridRetrievalPipeline
-from llm_handler import LLMHandler, HybridRAGPipeline
+from llm_handler import LLMHandler, HybridRAGPipeline, sanitize_text_for_json
 from config import config
 
 # Load environment variables
 load_dotenv()
 
-# Page configuration
-st.set_page_config(
-    page_title="Financial Data Chatbot",
-    page_icon="💰",
-    layout="centered",
-    initial_sidebar_state="collapsed"
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('app.log', mode='a')
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="Financial Data Chatbot API",
+    description="API for querying fund holdings, trades, and performance data",
+    version="1.0.0"
 )
 
-# Custom CSS
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
-        text-align: center;
-        margin-bottom: 0.5rem;
-    }
-    .sub-header {
-        font-size: 1rem;
-        color: #666;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Mount static files
+static_path = Path(__file__).parent / "static"
+if static_path.exists():
+    app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
+
+# Global variables for the RAG system
+rag_pipeline = None
+initialization_error = None
 
 
-# Initialize session state
-if 'messages' not in st.session_state:
-    st.session_state.messages = []
-
-if 'rag_pipeline' not in st.session_state:
-    st.session_state.rag_pipeline = None
+# Request/Response models
+class QueryRequest(BaseModel):
+    question: str
 
 
-@st.cache_resource(show_spinner="🔄 Initializing chatbot...")
-def initialize_rag_system():
-    """Initialize RAG system once and cache it."""
+class QueryResponse(BaseModel):
+    answer: str
+    query_type: str
+    error: Optional[str] = None
+
+
+class HealthResponse(BaseModel):
+    status: str
+    message: str
+    system_ready: bool
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize the RAG system on startup."""
+    global rag_pipeline, initialization_error
+
+    logger.info("="*60)
+    logger.info("Starting Financial RAG Chatbot API")
+    logger.info("="*60)
+
     try:
-        # Load data (needed for pandas aggregations)
+        logger.info("Loading CSV data...")
         processor = DataProcessor(config.HOLDINGS_CSV, config.TRADES_CSV)
         processor.load_data()
         processor.clean_data()
+        logger.info("CSV data loaded successfully")
 
-        # Initialize vector database
+        logger.info("Connecting to vector database...")
         vdb = VectorDatabase()
         if not vdb.initialize_pinecone():
-            st.error("❌ Failed to connect to Pinecone. Make sure it's initialized with setup_pinecone.py")
-            return None
+            raise Exception("Failed to connect to Pinecone. Make sure it's initialized.")
+        logger.info("Vector database connected")
 
-        # Initialize HYBRID retrieval pipeline
+        logger.info("Setting up hybrid retrieval pipeline...")
         hybrid_retrieval = HybridRetrievalPipeline(
             vdb,
             processor.holdings_df,
             processor.trades_df
         )
+        logger.info("Hybrid retrieval pipeline ready")
 
-        # Initialize LLM
+        logger.info("Initializing LLM...")
         llm = LLMHandler()
+        logger.info("LLM initialized")
 
-        # Create HYBRID RAG pipeline
         rag_pipeline = HybridRAGPipeline(hybrid_retrieval, llm)
-
-        return rag_pipeline
+        logger.info("="*60)
+        logger.info("RAG System Initialized Successfully!")
+        logger.info("="*60)
 
     except Exception as e:
-        st.error(f"❌ Initialization error: {str(e)}")
-        st.info("💡 Make sure you've run: python setup_pinecone.py")
-        return None
+        initialization_error = str(e)
+        logger.error(f"Initialization Error: {initialization_error}", exc_info=True)
+        logger.info("Make sure you've run: python setup_pinecone.py")
 
 
-# Header
-st.markdown('<div class="main-header">💰 Financial Data Chatbot</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Ask questions about fund holdings, trades, and performance</div>', unsafe_allow_html=True)
+@app.get("/")
+async def read_root():
+    """Serve the minimal HTML UI."""
+    static_file = Path(__file__).parent / "static" / "index.html"
+    if static_file.exists():
+        return FileResponse(static_file)
+    else:
+        return HTMLResponse(
+            content="<h1>UI not found</h1><p>Please ensure the static/index.html file exists.</p>",
+            status_code=404
+        )
 
-# Initialize system
-if st.session_state.rag_pipeline is None:
-    st.session_state.rag_pipeline = initialize_rag_system()
 
-# Check if system is ready
-if st.session_state.rag_pipeline is None:
-    st.stop()
+@app.get("/api/health", response_model=HealthResponse)
+async def health_check():
+    """Health check endpoint."""
+    if initialization_error:
+        logger.warning(f"Health check failed: {initialization_error}")
+        return HealthResponse(
+            status="error",
+            message=f"System initialization failed: {initialization_error}",
+            system_ready=False
+        )
 
-# Example questions
-with st.expander("📝 Example Questions", expanded=False):
-    col1, col2 = st.columns(2)
+    if rag_pipeline is None:
+        return HealthResponse(
+            status="initializing",
+            message="System is still initializing",
+            system_ready=False
+        )
 
-    with col1:
-        st.markdown("**Aggregation Queries:**")
-        if st.button("Which fund performed best?", key="ex1"):
-            st.session_state.user_input = "Which fund performed best based on yearly P&L?"
-        if st.button("Compare all funds", key="ex2"):
-            st.session_state.user_input = "Compare P&L performance of all funds"
-        if st.button("Top 3 funds by P&L", key="ex3"):
-            st.session_state.user_input = "What are the top 3 funds by yearly P&L?"
+    return HealthResponse(
+        status="healthy",
+        message="System is ready",
+        system_ready=True
+    )
 
-    with col2:
-        st.markdown("**Specific Queries:**")
-        if st.button("Garfield holdings count", key="ex4"):
-            st.session_state.user_input = "How many holdings does Garfield have?"
-        if st.button("MNC Fund securities", key="ex5"):
-            st.session_state.user_input = "What securities does MNC Investment Fund hold?"
-        if st.button("HoldCo 1 trades", key="ex6"):
-            st.session_state.user_input = "Total number of trades for HoldCo 1"
 
-st.divider()
+@app.post("/api/query", response_model=QueryResponse)
+async def query_endpoint(request: QueryRequest):
+    """Query endpoint for asking questions."""
+    logger.info(f"Received query: {request.question}")
 
-# Display chat history
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    if initialization_error:
+        logger.error(f"Query rejected - system not initialized: {initialization_error}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"System not initialized: {initialization_error}"
+        )
 
-# Chat input
-if prompt := st.chat_input("Ask about funds, holdings, or trades...", key="chat_input"):
-    # Add user message to chat
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    if rag_pipeline is None:
+        logger.warning("Query rejected - system still initializing")
+        raise HTTPException(
+            status_code=503,
+            detail="System is still initializing. Please try again in a moment."
+        )
 
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    try:
+        result = rag_pipeline.query(request.question)
+        logger.info(f"Query processed successfully | Type: {result.get('query_type', 'unknown')}")
 
-    # Get bot response
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            try:
-                result = st.session_state.rag_pipeline.query(prompt)
-                answer = result['answer']
-                query_type = result.get('query_type', 'unknown')
+        # Triple sanitize to ensure JSON compatibility
+        raw_answer = result.get('answer', '')
+        logger.info(f"Raw answer length: {len(raw_answer)}")
+        
+        # First sanitization - use the imported function
+        sanitized_answer = sanitize_text_for_json(raw_answer)
+        logger.info(f"After sanitize_text_for_json: {len(sanitized_answer)}")
+        
+        # Second pass - remove any remaining problematic characters
+        sanitized_answer = re.sub(r'[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F]', '', sanitized_answer)
+        logger.info(f"After regex cleanup: {len(sanitized_answer)}")
+        
+        # Third pass - ensure proper string encoding
+        sanitized_answer = sanitized_answer.encode('utf-8', errors='ignore').decode('utf-8', errors='ignore')
+        logger.info(f"Final answer length: {len(sanitized_answer)}")
 
-                # Show routing info (subtle)
-                route_emoji = "📊" if query_type == 'aggregation' else "🔍"
-                st.caption(f"{route_emoji} {query_type.title()} Query")
+        return QueryResponse(
+            answer=sanitized_answer,
+            query_type=result.get('query_type', 'unknown'),
+            error=result.get('error')
+        )
 
-                # Show answer
-                st.markdown(answer)
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Error processing query: {error_msg}", exc_info=True)
+        
+        # Try to return a safe error message
+        safe_error = sanitize_text_for_json(f"Error processing query: {error_msg}")
+        
+        return QueryResponse(
+            answer=safe_error,
+            query_type="error",
+            error=safe_error
+        )
 
-            except Exception as e:
-                answer = f"Sorry, an error occurred: {str(e)}"
-                st.error(answer)
 
-    # Add bot response to chat
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+if __name__ == "__main__":
+    logger.info("="*60)
+    logger.info("Starting Financial Data Chatbot Server")
+    logger.info("="*60)
+    logger.info("Server: http://localhost:8000")
+    logger.info("API Docs: http://localhost:8000/docs")
+    logger.info("="*60)
 
-# Clear chat button in sidebar
-with st.sidebar:
-    st.markdown("### 🗑️ Chat Controls")
-    if st.button("Clear Chat History", use_container_width=True):
-        st.session_state.messages = []
-        st.rerun()
-
-    st.divider()
-    st.markdown("### ℹ️ About")
-    st.caption("This chatbot uses a **Hybrid RAG + Pandas** approach:")
-    st.caption("- **Aggregation queries** → Pandas (all funds)")
-    st.caption("- **Specific queries** → RAG (semantic search)")
-    st.caption("- **Data:** Holdings (1,022 rows), Trades (649 rows)")
+    uvicorn.run(
+        "app:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=False,
+        log_config=None  # Use our custom logging
+    )

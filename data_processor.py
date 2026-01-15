@@ -18,7 +18,14 @@ class DataProcessor:
         self.trades_path = trades_path
         self.holdings_df = None
         self.trades_df = None
-        self.tokenizer = tiktoken.get_encoding("cl100k_base")
+        self._tokenizer = None
+
+    @property
+    def tokenizer(self):
+        """Lazy-load tokenizer to avoid startup delays."""
+        if self._tokenizer is None:
+            self._tokenizer = tiktoken.get_encoding("cl100k_base")
+        return self._tokenizer
 
     def load_data(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """Load both CSV files with proper parsing."""

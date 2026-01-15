@@ -4,8 +4,10 @@ Integrates with Google Gemini for answer generation.
 """
 
 import time
+import re
 from typing import Optional, Dict
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from config import config
 from retrieval import RetrievalPipeline
 
@@ -18,10 +20,12 @@ class LLMHandler:
         self.api_key = api_key or config.GEMINI_API_KEY
         self.model_name = model_name or config.LLM_MODEL
 
-        # Configure Gemini
+        # Configure Gemini client
         if self.api_key:
-            genai.configure(api_key=self.api_key)
+            self.client = genai.Client(api_key=self.api_key)
             print(f"✅ Gemini API configured")
+        else:
+            self.client = None
 
         # Initialize model
         self.model = None
@@ -30,16 +34,15 @@ class LLMHandler:
     def _init_model(self):
         """Initialize the Gemini model."""
         try:
-            generation_config = {
-                "temperature": config.LLM_TEMPERATURE,
-                "max_output_tokens": config.LLM_MAX_TOKENS,
-            }
-
-            self.model = genai.GenerativeModel(
-                model_name=self.model_name,
-                generation_config=generation_config
-            )
-            print(f"✅ Initialized {self.model_name}")
+            if self.client:
+                self.generation_config = types.GenerateContentConfig(
+                    temperature=config.LLM_TEMPERATURE,
+                    max_output_tokens=config.LLM_MAX_TOKENS,
+                )
+                self.model = self.model_name
+                print(f"✅ Initialized {self.model_name}")
+            else:
+                self.model = None
 
         except Exception as e:
             print(f"❌ Error initializing model: {str(e)}")
@@ -62,7 +65,7 @@ class LLMHandler:
         Returns:
             Generated answer text
         """
-        if not self.model:
+        if not self.model or not self.client:
             return "❌ LLM model not initialized. Please check your API key."
 
         try:
@@ -73,13 +76,17 @@ class LLMHandler:
             print(f"🤖 Generating answer with {self.model_name}...")
             start_time = time.time()
 
-            response = self.model.generate_content(prompt)
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=self.generation_config
+            )
 
             elapsed = time.time() - start_time
             print(f"  ✅ Generated in {elapsed:.2f}s")
 
             # Extract text from response
-            if hasattr(response, 'text'):
+            if response.text:
                 answer = response.text
             else:
                 answer = "Sorry, I could not generate an answer."
@@ -186,6 +193,27 @@ class RAGPipeline:
         return result
 
 
+def sanitize_text_for_json(text: str) -> str:
+    """
+    Clean text to ensure JSON serialization succeeds.
+    Removes control characters while preserving newlines and formatting.
+    """
+    if not text:
+        return text
+
+    # Remove control characters except newline and tab
+    # This regex removes characters in the range 0x00-0x1F except \n (0x0A) and \t (0x09)
+    text = re.sub(r'[\x00-\x09\x0B-\x1F\x7F]', '', text)
+
+    # Normalize line endings
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+
+    # Remove any null bytes
+    text = text.replace('\x00', '')
+
+    return text.strip()
+
+
 class HybridRAGPipeline:
     """
     Hybrid RAG pipeline that intelligently routes queries.
@@ -204,12 +232,19 @@ CRITICAL RULES:
 4. Format currency values clearly with $ and commas
 5. When comparing funds, show multiple funds, not just the top one
 
+FORMATTING INSTRUCTIONS:
+- Use **bold** for fund names, key numbers, and important terms
+- Use bullet points (*) for listing multiple items
+- Use numbered lists (1., 2., 3.) for rankings
+- Add blank lines between sections for readability
+- Structure the answer with clear sections
+
 CONTEXT (Complete Fund Statistics):
 {context}
 
 QUESTION: {question}
 
-ANSWER (with specific numbers from context):"""
+ANSWER (well-formatted with bold text, lists, and clear structure):"""
 
     # Prompt template for specific queries (RAG chunks)
     RAG_PROMPT = """You are a financial data analyst. Answer the question using ONLY the provided context chunks from holdings and trades data.
@@ -221,12 +256,19 @@ CRITICAL RULES:
 4. Cite specific numbers and fund names from context
 5. Be precise with values from the data
 
+FORMATTING INSTRUCTIONS:
+- Use **bold** for fund names, security names, and key numbers
+- Use bullet points (*) for listing holdings, securities, or multiple items
+- Use numbered lists (1., 2., 3.) for rankings or ordered items
+- Add blank lines between different funds or sections
+- Keep the answer clear and well-structured
+
 CONTEXT (Retrieved Chunks):
 {context}
 
 QUESTION: {question}
 
-ANSWER (with specific numbers from context):"""
+ANSWER (well-formatted with bold text, lists, and clear structure):"""
 
     def __init__(self, hybrid_retrieval, llm_handler: LLMHandler):
         """Initialize with hybrid retrieval and LLM handler."""
@@ -280,8 +322,13 @@ ANSWER (with specific numbers from context):"""
 
         # Step 4: Generate answer with LLM
         try:
-            response = self.llm.model.generate_content(filled_prompt)
-            answer = response.text if hasattr(response, 'text') else "Sorry, I could not generate an answer."
+            response = self.llm.client.models.generate_content(
+                model=self.llm.model,
+                contents=filled_prompt,
+                config=self.llm.generation_config
+            )
+            raw_answer = response.text if response.text else "Sorry, I could not generate an answer."
+            answer = sanitize_text_for_json(raw_answer)
         except Exception as e:
             print(f"❌ Generation error: {str(e)}")
             answer = f"Error generating answer: {str(e)}"
